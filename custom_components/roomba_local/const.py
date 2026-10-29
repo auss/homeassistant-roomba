@@ -16,7 +16,14 @@ DEFAULT_COUNTRY = "US"
 
 # Local MQTT TLS: MQTT 3.1.1, legacy cipher required by robot firmware.
 MQTT_PROTOCOL = 4  # MQTTv311
-TLS_CIPHERS = "AES128-SHA256:@SECLEVEL=0"
+# Prefer robot-specific cipher, then OpenSSL 3 relaxed defaults.
+TLS_CIPHER_CANDIDATES = (
+    "AES128-SHA256:@SECLEVEL=0",
+    "AES128-SHA256@SECLEVEL=0",
+    "DEFAULT:@SECLEVEL=0",
+    "DEFAULT@SECLEVEL=0",
+)
+TLS_CIPHERS = TLS_CIPHER_CANDIDATES[0]
 MQTT_CMD_TOPIC = "cmd"
 MQTT_KEEPALIVE = 60
 

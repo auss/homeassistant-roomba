@@ -17,7 +17,13 @@
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to the robot over local MQTT (TLS port 8883). Check BLID, password, host, and that the robot is on the same network.",
+      "cannot_connect": "Could not connect to the robot over local MQTT (TLS port 8883). See Home Assistant logs for the classified failure detail.",
+      "dns_error": "Hostname/mDNS lookup failed. Enter the robot's LAN IP in Host, or fix mDNS from the Home Assistant host.",
+      "unreachable": "TCP port 8883 is unreachable from this Home Assistant host. If scripts on another VM work, check HA OS/container networking, VLANs, and firewall on the hypervisor — this is not a TLS/password problem.",
+      "tls_error": "Reached the robot but the TLS handshake failed. The robot needs legacy OpenSSL settings (AES128-SHA256, SECLEVEL=0, legacy renegotiation). Update this integration; do not treat this as a wrong IP.",
+      "auth_invalid": "Robot rejected MQTT username/password (BLID / local password). TCP and TLS succeeded.",
+      "mqtt_protocol": "Robot rejected the MQTT protocol or client id after TLS succeeded.",
+      "mqtt_timeout": "TCP is reachable but MQTT CONNACK timed out. The robot may be busy or dropping the TLS/MQTT session.",
       "unknown": "Unexpected error while validating credentials."
     },
     "abort": {
