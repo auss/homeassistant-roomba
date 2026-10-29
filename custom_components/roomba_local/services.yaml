@@ -1,0 +1,32 @@
+fetch_map:
+  name: Fetch cloud map
+  description: >
+    One-shot iRobot account login to download the persistent map image.
+    Credentials are used for this call only and are not saved to the config entry.
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: Optional. Defaults to the only Roomba Local entry when omitted.
+      required: false
+      selector:
+        config_entry:
+          integration: roomba_local
+    email:
+      name: iRobot account email
+      required: true
+      selector:
+        text:
+    password:
+      name: iRobot account password
+      required: true
+      selector:
+        text:
+          type: password
+    country:
+      name: Country code
+      description: Two-letter country code for endpoint discovery (default US).
+      required: false
+      example: US
+      default: US
+      selector:
+        text:

@@ -6,12 +6,15 @@ to control cleaning missions.
 
 Supports Roomba Combo j9+ and the same local MQTT / LSS family.
 
-## Features (Phase 1)
+## Features (Phase 1 + on-demand maps)
 
 - **Config flow**: BLID, local MQTT password, optional host/IP
 - **Vacuum entity**: start / pause / resume / stop / return to dock / locate
 - **Sensors**: battery, status, mission phase, location/pose summary, bin full
 - **Find button**: locate beep
+- **Map image**: on-demand cloud fetch via Configure → *Fetch cloud map* (or
+  `roomba_local.fetch_map`). iRobot account credentials are used for that run
+  only and are **not** stored in the config entry.
 - Transport: MQTT 3.1.1 over TLS with the robot’s required legacy cipher
 
 Manual drive / joystick control is **not supported** — the robot rejects local drive
@@ -56,7 +59,18 @@ pytest
 Unit tests cover MQTT payload shaping, TLS context setup, and reported-state mapping.
 A live robot is not required for CI.
 
-## Cloud / maps (later)
+## On-demand map fetch
 
-Remote cloud IoT MQTT and map image fetch are planned for a later phase. Phase 1 is
-LAN-only.
+Maps are refreshed only when you ask:
+
+1. **Configure → Fetch cloud map** and enter iRobot email/password (and optional
+   country code), or call `roomba_local.fetch_map`.
+2. The integration downloads the active persistent map and updates the **Map**
+   image entity (`config/roomba_local/<blid>/map.png`).
+3. Account password and cloud tokens are discarded immediately after the fetch.
+
+There is no persistent cloud login. Always-on remote cloud MQTT remains out of scope.
+
+## Unsupported
+
+Remote cloud IoT MQTT for live status when off-LAN is not implemented.

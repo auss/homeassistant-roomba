@@ -24,6 +24,34 @@
       "already_configured": "This Roomba is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Roomba Local options",
+        "menu_options": {
+          "fetch_map": "Fetch cloud map (one-time login)"
+        }
+      },
+      "fetch_map": {
+        "title": "Fetch cloud map",
+        "description": "Enter your iRobot account email and password for this refresh only. Credentials and cloud tokens are discarded after the map is saved. Robot …{blid_suffix}.",
+        "data": {
+          "email": "iRobot account email",
+          "password": "iRobot account password",
+          "country": "Country code"
+        },
+        "data_description": {
+          "email": "Used once to authorize map download; not stored in the config entry.",
+          "password": "Used once for this fetch; never saved.",
+          "country": "Two-letter country code for cloud endpoint discovery (default US)."
+        }
+      }
+    },
+    "error": {
+      "map_fetch_failed": "Could not log in or download the map. Check account credentials and try again.",
+      "unknown": "Unexpected error while fetching the map."
+    }
+  },
   "entity": {
     "sensor": {
       "battery": { "name": "Battery" },
@@ -34,6 +62,9 @@
     },
     "button": {
       "find": { "name": "Find" }
+    },
+    "image": {
+      "map": { "name": "Map" }
     }
   }
 }

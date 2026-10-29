@@ -7,15 +7,28 @@ DOMAIN = "roomba_local"
 CONF_BLID = "blid"
 CONF_PASSWORD = "password"
 CONF_HOST = "host"
+CONF_EMAIL = "email"
+CONF_COUNTRY = "country"
 
 DEFAULT_PORT = 8883
 DEFAULT_NAME = "Roomba"
+DEFAULT_COUNTRY = "US"
 
 # Local MQTT TLS: MQTT 3.1.1, legacy cipher required by robot firmware.
 MQTT_PROTOCOL = 4  # MQTTv311
 TLS_CIPHERS = "AES128-SHA256:@SECLEVEL=0"
 MQTT_CMD_TOPIC = "cmd"
 MQTT_KEEPALIVE = 60
+
+# Fixed mobile app id used for one-shot cloud login (map fetch only).
+CLOUD_APP_ID = "ANDROID-A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
+
+# Options / service metadata keys (never credentials).
+OPT_LAST_MAP_FETCHED_AT = "last_map_fetched_at"
+OPT_LAST_PMAP_ID = "last_pmap_id"
+OPT_LAST_PMAPV_ID = "last_pmapv_id"
+
+SERVICE_FETCH_MAP = "fetch_map"
 
 ATTR_PHASE = "phase"
 ATTR_CYCLE = "cycle"

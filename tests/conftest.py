@@ -1,4 +1,4 @@
-"""Pytest path setup that loads MQTT helpers without importing Home Assistant."""
+"""Pytest path setup that loads helpers without importing Home Assistant."""
 
 from __future__ import annotations
 
@@ -40,5 +40,13 @@ const = _load_file("custom_components.roomba_local.const", PKG_DIR / "const.py")
 mqtt = _load_file(
     "custom_components.roomba_local.roomba_mqtt", PKG_DIR / "roomba_mqtt.py"
 )
+map_cloud = _load_file(
+    "custom_components.roomba_local.map_cloud", PKG_DIR / "map_cloud.py"
+)
+map_store = _load_file(
+    "custom_components.roomba_local.map_store", PKG_DIR / "map_store.py"
+)
 pkg.const = const  # type: ignore[attr-defined]
 pkg.roomba_mqtt = mqtt  # type: ignore[attr-defined]
+pkg.map_cloud = map_cloud  # type: ignore[attr-defined]
+pkg.map_store = map_store  # type: ignore[attr-defined]
