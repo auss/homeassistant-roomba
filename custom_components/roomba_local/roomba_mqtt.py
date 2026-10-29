@@ -296,6 +296,32 @@ def build_command_payload(command: MissionCommand) -> dict[str, Any]:
     }
 
 
+def build_region_start_payload(
+    *,
+    pmap_id: str,
+    regions: list[dict[str, str]],
+    user_pmapv_id: str | None = None,
+) -> dict[str, Any]:
+    """Selective clean: start + pmap_id + regions (local MQTT cmd)."""
+    payload: dict[str, Any] = {
+        "command": "start",
+        "time": int(time.time()),
+        "initiator": "localApp",
+        "pmap_id": pmap_id,
+        "regions": [
+            {
+                "region_id": str(r["region_id"]),
+                "type": str(r.get("type") or "rid"),
+            }
+            for r in regions
+        ],
+        "ordered": 1,
+    }
+    if user_pmapv_id:
+        payload["user_pmapv_id"] = user_pmapv_id
+    return payload
+
+
 def map_activity(state: RoombaState) -> str:
     """Map Roomba cycle/phase into a vacuum activity string."""
     phase = (state.phase or "").lower()
@@ -557,14 +583,20 @@ class RoombaMqttClient:
 
     def send_command(self, command: MissionCommand) -> None:
         """Publish a mission command to the robot `cmd` topic."""
+        self.publish_cmd(build_command_payload(command))
+
+    def publish_cmd(self, payload: dict[str, Any]) -> None:
+        """Publish an arbitrary verified payload to the robot `cmd` topic."""
         client = self._client
         if client is None or not self.state.connected:
             raise ConnectionError("Roomba MQTT client is not connected")
-        payload = json.dumps(build_command_payload(command))
-        result = client.publish(MQTT_CMD_TOPIC, payload, qos=0)
+        body = json.dumps(payload)
+        result = client.publish(MQTT_CMD_TOPIC, body, qos=0)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
-            raise ConnectionError(f"Failed to publish command {command}: rc={result.rc}")
-        _LOGGER.debug("Published Roomba command %s", command)
+            raise ConnectionError(
+                f"Failed to publish command {payload.get('command')}: rc={result.rc}"
+            )
+        _LOGGER.debug("Published Roomba cmd %s", payload.get("command"))
 
     def get_state(self) -> RoombaState:
         """Return a copy-like snapshot of current state."""

@@ -37,6 +37,7 @@ OPT_LAST_PMAP_ID = "last_pmap_id"
 OPT_LAST_PMAPV_ID = "last_pmapv_id"
 
 SERVICE_FETCH_MAP = "fetch_map"
+SERVICE_CLEAN_ROOMS = "clean_rooms"
 
 ATTR_PHASE = "phase"
 ATTR_CYCLE = "cycle"

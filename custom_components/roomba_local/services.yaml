@@ -1,8 +1,8 @@
 fetch_map:
   name: Fetch cloud map
   description: >
-    One-shot iRobot account login to download the persistent map image.
-    Credentials are used for this call only and are not saved to the config entry.
+    One-shot iRobot account login to download the persistent map image and room
+    list. Credentials are used for this call only and are not saved to the config entry.
   fields:
     entry_id:
       name: Config entry ID
@@ -30,3 +30,25 @@ fetch_map:
       default: US
       selector:
         text:
+
+clean_rooms:
+  name: Clean rooms
+  description: >
+    Start cleaning named rooms over local MQTT. Requires a prior map fetch so
+    room names and pmap_id are saved. Names match case-insensitively.
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: Optional. Defaults to the only Roomba Local entry when omitted.
+      required: false
+      selector:
+        config_entry:
+          integration: roomba_local
+    rooms:
+      name: Rooms
+      description: Room names from the last map fetch (e.g. Kitchen).
+      required: true
+      example: '["Kitchen"]'
+      selector:
+        text:
+          multiple: true

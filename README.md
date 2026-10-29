@@ -6,15 +6,16 @@ to control cleaning missions.
 
 Supports Roomba Combo j9+ and the same local MQTT / LSS family.
 
-## Features (Phase 1 + on-demand maps)
+## Features
 
 - **Config flow**: BLID, local MQTT password, optional host/IP
 - **Vacuum entity**: start / pause / resume / stop / return to dock / locate
+- **Clean rooms**: `roomba_local.clean_rooms` with room names (after map fetch)
 - **Sensors**: battery, status, mission phase, location/pose summary, bin full
 - **Find button**: locate beep
-- **Map image**: on-demand cloud fetch via Configure → *Fetch cloud map* (or
-  `roomba_local.fetch_map`). iRobot account credentials are used for that run
-  only and are **not** stored in the config entry.
+- **Map image + rooms**: on-demand cloud fetch via Configure → *Fetch cloud map*
+  (or `roomba_local.fetch_map`). Saves PNG, `pmap_id`, and `rooms.json`. Account
+  credentials are used for that run only and are **not** stored.
 - Transport: MQTT 3.1.1 over TLS with the robot’s required legacy cipher
 
 Manual drive / joystick control is **not supported** — the robot rejects local drive
@@ -122,9 +123,10 @@ Maps are refreshed only when you ask:
 
 1. **Configure → Fetch cloud map** and enter iRobot email/password (and optional
    country code), or call `roomba_local.fetch_map`.
-2. The integration downloads the active persistent map and updates the **Map**
-   image entity (`config/roomba_local/<blid>/map.png`).
-3. Account password and cloud tokens are discarded immediately after the fetch.
+2. The integration downloads the active persistent map, updates the **Map**
+   image entity, and saves `rooms.json` for selective clean.
+3. Call `roomba_local.clean_rooms` with `rooms: ["Kitchen"]` (names from that map).
+4. Account password and cloud tokens are discarded immediately after the fetch.
 
 There is no persistent cloud login. Always-on remote cloud MQTT remains out of scope.
 

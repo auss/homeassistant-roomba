@@ -79,7 +79,11 @@ def test_assert_no_secrets_rejects_cloud_fields() -> None:
 @patch("custom_components.roomba_local.map_cloud._http_json")
 def test_fetch_map_image_success_scrubs_and_returns_png(mock_http: MagicMock) -> None:
     blid = "ABCDEF123456"
-    umf = {"regions": [{"polygon": [[0, 0], [1, 0], [1, 1]]}]}
+    umf = {
+        "regions": [
+            {"id": "1", "name": "Kitchen", "type": "rid", "polygon": [[0, 0], [1, 0], [1, 1]]}
+        ]
+    }
 
     def side_effect(method: str, url: str, **kwargs: Any) -> Any:
         if "discover/endpoints" in url:
@@ -149,6 +153,7 @@ def test_fetch_map_image_success_scrubs_and_returns_png(mock_http: MagicMock) ->
     assert result.png_bytes.startswith(b"\x89PNG")
     assert result.pmap_id == "pmap-1"
     assert result.pmapv_id == "v-1"
+    assert result.rooms == [{"name": "Kitchen", "region_id": "1", "type": "rid"}]
     assert result.robot_name == "Rosie"
     # Result dataclass must not carry secrets.
     dumped = json.dumps(result.__dict__, default=lambda o: None)
