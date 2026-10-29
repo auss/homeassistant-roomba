@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -108,13 +109,24 @@ class RoombaDataUpdateCoordinator(DataUpdateCoordinator[RoombaState]):
 
     async def async_send_command(self, command: str) -> None:
         """Send a mission command via the MQTT client."""
-        if self.client is None:
-            connected = await self._async_try_connect(raise_on_failure=False)
-            if not connected or self.client is None:
-                raise ConnectionError(
-                    self.last_connect_error or "Roomba MQTT client is not connected"
-                )
+        await self._async_ensure_client()
+        assert self.client is not None
         await self.hass.async_add_executor_job(self.client.send_command, command)
+
+    async def async_publish_cmd(self, payload: dict[str, Any]) -> None:
+        """Publish a full cmd payload (e.g. selective room start)."""
+        await self._async_ensure_client()
+        assert self.client is not None
+        await self.hass.async_add_executor_job(self.client.publish_cmd, payload)
+
+    async def _async_ensure_client(self) -> None:
+        if self.client is not None:
+            return
+        connected = await self._async_try_connect(raise_on_failure=False)
+        if not connected or self.client is None:
+            raise ConnectionError(
+                self.last_connect_error or "Roomba MQTT client is not connected"
+            )
 
     async def async_shutdown(self) -> None:
         """Disconnect MQTT and shut down the coordinator."""

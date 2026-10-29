@@ -37,6 +37,7 @@ class MapFetchResult:
     robot_name: str | None = None
     content_type: str = "image/png"
     notes: list[str] = field(default_factory=list)
+    rooms: list[dict[str, str]] = field(default_factory=list)
 
 
 class MapFetchError(Exception):
@@ -286,6 +287,32 @@ def fetch_umf(
     return data
 
 
+def extract_rooms(umf: dict[str, Any]) -> list[dict[str, str]]:
+    """Pull named regions from UMF for selective clean (name → region_id)."""
+    rooms: list[dict[str, str]] = []
+    raw = umf.get("regions")
+    if not isinstance(raw, list):
+        return rooms
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        region_id = item.get("region_id") or item.get("id") or item.get("rid")
+        name = item.get("name") or item.get("region_name")
+        if region_id is None or not name:
+            continue
+        rtype = item.get("type") or item.get("region_type") or "rid"
+        if str(rtype).lower() in {"room", "region"}:
+            rtype = "rid"
+        rooms.append(
+            {
+                "name": str(name).strip(),
+                "region_id": str(region_id),
+                "type": str(rtype) if str(rtype) in {"rid", "zid"} else "rid",
+            }
+        )
+    return rooms
+
+
 def _iter_polygons(node: Any) -> list[list[tuple[float, float]]]:
     """Best-effort extraction of 2D polygons from nested UMF JSON."""
     polygons: list[list[tuple[float, float]]] = []
@@ -468,6 +495,9 @@ def fetch_map_image(
     title = robot_name or f"Roomba {blid[-6:].upper()}"
     subtitle = f"pmap={pmap_id} · {fetched_at}"
     png = render_map_png(umf, title=title, subtitle=subtitle)
+    rooms = extract_rooms(umf)
+    if not rooms:
+        notes.append("UMF had no named regions; clean_rooms needs a map with room names")
     return MapFetchResult(
         png_bytes=png,
         blid=blid,
@@ -476,4 +506,5 @@ def fetch_map_image(
         fetched_at=fetched_at,
         robot_name=robot_name,
         notes=notes,
+        rooms=rooms,
     )

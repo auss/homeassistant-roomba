@@ -17,6 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAP_FILENAME = "map.png"
 META_FILENAME = "map_meta.json"
+ROOMS_FILENAME = "rooms.json"
 
 # Keys allowed in persisted metadata — never secrets.
 SAFE_META_KEYS = frozenset(
@@ -45,7 +46,24 @@ def save_map_result(hass: HomeAssistant, result: MapFetchResult) -> Path:
         "content_type": result.content_type,
     }
     (directory / META_FILENAME).write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    _LOGGER.info("Saved Roomba map image for %s to %s", result.blid[-6:], png_path)
+    rooms = [
+        {
+            "name": str(r.get("name", "")).strip(),
+            "region_id": str(r.get("region_id", "")),
+            "type": str(r.get("type") or "rid"),
+        }
+        for r in (result.rooms or [])
+        if r.get("name") and r.get("region_id")
+    ]
+    (directory / ROOMS_FILENAME).write_text(
+        json.dumps(rooms, indent=2), encoding="utf-8"
+    )
+    _LOGGER.info(
+        "Saved Roomba map image for %s to %s (%s rooms)",
+        result.blid[-6:],
+        png_path,
+        len(rooms),
+    )
     return png_path
 
 
@@ -69,6 +87,60 @@ def load_map_meta(hass: HomeAssistant, blid: str) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return None
     return {k: v for k, v in data.items() if k in SAFE_META_KEYS}
+
+
+def load_rooms(hass: HomeAssistant, blid: str) -> list[dict[str, str]]:
+    """Load persisted room name → region_id list from last map fetch."""
+    path = map_directory(hass, blid) / ROOMS_FILENAME
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    rooms: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        region_id = str(item.get("region_id") or "").strip()
+        if not name or not region_id:
+            continue
+        rtype = str(item.get("type") or "rid")
+        rooms.append(
+            {
+                "name": name,
+                "region_id": region_id,
+                "type": rtype if rtype in {"rid", "zid"} else "rid",
+            }
+        )
+    return rooms
+
+
+def resolve_room_names(
+    rooms: list[dict[str, str]], names: list[str]
+) -> list[dict[str, str]]:
+    """Match requested names (case-insensitive) to saved rooms; raise KeyError listing misses."""
+    by_lower = {r["name"].casefold(): r for r in rooms}
+    matched: list[dict[str, str]] = []
+    missing: list[str] = []
+    for name in names:
+        key = name.strip().casefold()
+        if not key:
+            continue
+        room = by_lower.get(key)
+        if room is None:
+            missing.append(name.strip())
+        else:
+            matched.append(room)
+    if missing:
+        known = ", ".join(sorted({r["name"] for r in rooms})) or "(none)"
+        raise KeyError(f"Unknown room(s): {', '.join(missing)}. Known: {known}")
+    if not matched:
+        raise KeyError("No room names provided")
+    return matched
 
 
 def assert_no_secrets_in_entry_data(data: dict[str, Any]) -> None:
