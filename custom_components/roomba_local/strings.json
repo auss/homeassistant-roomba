@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Roomba",
+        "description": "Enter the robot BLID and local MQTT password. Host/IP is optional; when omitted the integration uses mDNS hostname iRobot-<BLID>.local.",
+        "data": {
+          "blid": "BLID",
+          "password": "Password",
+          "host": "Host (optional)"
+        },
+        "data_description": {
+          "blid": "Robot BLID (username for local MQTT).",
+          "password": "Local MQTT password for the robot.",
+          "host": "Robot IP or hostname on your LAN. Leave blank to resolve via mDNS."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the robot over local MQTT (TLS port 8883). Check BLID, password, host, and that the robot is on the same network.",
+      "unknown": "Unexpected error while validating credentials."
+    },
+    "abort": {
+      "already_configured": "This Roomba is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "Battery" },
+      "status": { "name": "Status" },
+      "phase": { "name": "Mission phase" },
+      "location": { "name": "Location" },
+      "bin_full": { "name": "Bin full" }
+    },
+    "button": {
+      "find": { "name": "Find" }
+    }
+  }
+}
