@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "paho-mqtt==2.1.0",
+  "pillow==11.1.0",
 ]
 
 [project.optional-dependencies]
