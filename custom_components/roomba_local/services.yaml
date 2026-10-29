@@ -31,11 +31,31 @@ fetch_map:
       selector:
         text:
 
+set_room_order:
+  name: Set room clean order
+  description: >
+    Save an ordered room list for the Start room clean button (same names as
+    the last map fetch).
+  fields:
+    entry_id:
+      name: Config entry ID
+      required: false
+      selector:
+        config_entry:
+          integration: roomba_local
+    rooms:
+      name: Rooms (ordered)
+      required: true
+      example: '["Kitchen", "Hall"]'
+      selector:
+        text:
+          multiple: true
+
 clean_rooms:
   name: Clean rooms
   description: >
-    Start cleaning named rooms over local MQTT. Requires a prior map fetch so
-    room names and pmap_id are saved. Names match case-insensitively.
+    Start cleaning named rooms over local MQTT. Requires a prior map fetch.
+    Optional mode / vacuum_power / mop_intensity override the select entities.
   fields:
     entry_id:
       name: Config entry ID
@@ -46,9 +66,39 @@ clean_rooms:
           integration: roomba_local
     rooms:
       name: Rooms
-      description: Room names from the last map fetch (e.g. Kitchen).
+      description: Room names from the last map fetch (order preserved).
       required: true
       example: '["Kitchen"]'
       selector:
         text:
           multiple: true
+    mode:
+      name: Clean mode
+      required: false
+      example: vacuum_and_mop
+      selector:
+        select:
+          options:
+            - vacuum
+            - vacuum_and_mop
+    vacuum_power:
+      name: Vacuum power
+      required: false
+      example: medium
+      selector:
+        select:
+          options:
+            - low
+            - medium
+            - high
+            - max
+    mop_intensity:
+      name: Mop intensity
+      required: false
+      example: medium
+      selector:
+        select:
+          options:
+            - low
+            - medium
+            - high

@@ -35,7 +35,8 @@
       "init": {
         "title": "Roomba Local options",
         "menu_options": {
-          "fetch_map": "Fetch cloud map (one-time login)"
+          "fetch_map": "Fetch cloud map (one-time login)",
+          "room_plan": "Set room clean plan (ordered)"
         }
       },
       "fetch_map": {
@@ -51,10 +52,23 @@
           "password": "Used once for this fetch; never saved.",
           "country": "Two-letter country code for cloud endpoint discovery (default US)."
         }
+      },
+      "room_plan": {
+        "title": "Room clean plan",
+        "description": "Enter room names in clean order, comma-separated. Known rooms: {known_rooms}. Then use the Clean mode / Vacuum power / Mop intensity selects and press Start room clean.",
+        "data": {
+          "room_order": "Ordered rooms"
+        },
+        "data_description": {
+          "room_order": "Example: Kitchen, Hall, Office"
+        }
       }
     },
     "error": {
       "map_fetch_failed": "Could not log in or download the map. Check account credentials and try again.",
+      "no_rooms": "No rooms saved yet. Fetch the cloud map first.",
+      "empty_order": "Enter at least one room name.",
+      "unknown_rooms": "One or more room names are not in the saved map. Check spelling against known rooms.",
       "unknown": "Unexpected error while fetching the map."
     }
   },
@@ -67,7 +81,13 @@
       "bin_full": { "name": "Bin full" }
     },
     "button": {
-      "find": { "name": "Find" }
+      "find": { "name": "Find" },
+      "start_room_clean": { "name": "Start room clean" }
+    },
+    "select": {
+      "clean_mode": { "name": "Clean mode" },
+      "vacuum_power": { "name": "Vacuum power" },
+      "mop_intensity": { "name": "Mop intensity" }
     },
     "image": {
       "map": { "name": "Map" }

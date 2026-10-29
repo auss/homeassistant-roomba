@@ -1,4 +1,4 @@
-"""Config flow for Roomba Local (LAN setup + on-demand map options)."""
+"""Config flow for Roomba Local (LAN setup + map + room clean plan)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
+from .clean_options import parse_room_order_text
 from .const import (
     CONF_BLID,
     CONF_COUNTRY,
@@ -23,12 +24,13 @@ from .const import (
     DEFAULT_COUNTRY,
     DEFAULT_PORT,
     DOMAIN,
+    OPT_CLEAN_ROOM_ORDER,
     OPT_LAST_MAP_FETCHED_AT,
     OPT_LAST_PMAP_ID,
     OPT_LAST_PMAPV_ID,
 )
 from .map_cloud import MapFetchError, fetch_map_image
-from .map_store import assert_no_secrets_in_entry_data, save_map_result
+from .map_store import assert_no_secrets_in_entry_data, load_rooms, save_map_result
 from .roomba_mqtt import RoombaMqttError, format_endpoint, resolve_host, validate_connection
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,7 +71,7 @@ class RoombaLocalConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> RoombaLocalOptionsFlow:
-        """Return the options flow for on-demand map fetch."""
+        """Return the options flow."""
         return RoombaLocalOptionsFlow(config_entry)
 
     async def async_step_user(
@@ -129,7 +131,7 @@ class RoombaLocalConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class RoombaLocalOptionsFlow(OptionsFlow):
-    """Options flow: ephemeral iRobot account login to refresh the map image."""
+    """Options: fetch map + set ordered room clean plan."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -140,7 +142,7 @@ class RoombaLocalOptionsFlow(OptionsFlow):
         """Show options menu."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["fetch_map"],
+            menu_options=["fetch_map", "room_plan"],
         )
 
     async def async_step_fetch_map(
@@ -171,14 +173,12 @@ class RoombaLocalOptionsFlow(OptionsFlow):
                 _LOGGER.exception("Unexpected map fetch error")
                 errors["base"] = "unknown"
             else:
-                # Scrub locals before touching storage / options.
                 email = ""
                 password = ""
                 user_input = {}
 
                 await self.hass.async_add_executor_job(save_map_result, self.hass, result)
 
-                # Persist only non-secret map metadata into options.
                 new_options = {
                     **dict(self._config_entry.options),
                     OPT_LAST_MAP_FETCHED_AT: result.fetched_at,
@@ -195,7 +195,6 @@ class RoombaLocalOptionsFlow(OptionsFlow):
                 )
                 return self.async_create_entry(title="", data=new_options)
 
-            # Ensure credentials are not retained on the flow object after errors.
             email = ""
             password = ""
 
@@ -206,4 +205,54 @@ class RoombaLocalOptionsFlow(OptionsFlow):
             description_placeholders={
                 "blid_suffix": self._config_entry.data[CONF_BLID][-6:].upper()
             },
+        )
+
+    async def async_step_room_plan(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Set ordered room list for the Start room clean button."""
+        blid = self._config_entry.data[CONF_BLID]
+        known = await self.hass.async_add_executor_job(load_rooms, self.hass, blid)
+        known_names = [r["name"] for r in known]
+        known_text = ", ".join(known_names) if known_names else "(fetch map first)"
+        current = list(self._config_entry.options.get(OPT_CLEAN_ROOM_ORDER) or [])
+        current_text = ", ".join(current)
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            order = parse_room_order_text(str(user_input.get("room_order") or ""))
+            if not known_names:
+                errors["base"] = "no_rooms"
+            elif not order:
+                errors["base"] = "empty_order"
+            else:
+                known_fold = {n.casefold(): n for n in known_names}
+                resolved: list[str] = []
+                bad: list[str] = []
+                for name in order:
+                    canon = known_fold.get(name.casefold())
+                    if canon is None:
+                        bad.append(name)
+                    else:
+                        resolved.append(canon)
+                if bad:
+                    errors["base"] = "unknown_rooms"
+                else:
+                    new_options = {
+                        **dict(self._config_entry.options),
+                        OPT_CLEAN_ROOM_ORDER: resolved,
+                    }
+                    assert_no_secrets_in_entry_data(new_options)
+                    return self.async_create_entry(title="", data=new_options)
+
+        schema = vol.Schema(
+            {
+                vol.Required("room_order", default=current_text): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="room_plan",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"known_rooms": known_text},
         )

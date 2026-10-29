@@ -6,6 +6,12 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from custom_components.roomba_local.clean_options import (
+    MODE_VACUUM,
+    MODE_VACUUM_AND_MOP,
+    build_region_params,
+    parse_room_order_text,
+)
 from custom_components.roomba_local.map_cloud import MapFetchResult, extract_rooms
 from custom_components.roomba_local.map_store import (
     ROOMS_FILENAME,
@@ -70,6 +76,35 @@ def test_region_start_payload_shape() -> None:
     whole = build_command_payload("start")
     assert "regions" not in whole
     assert "pmap_id" not in whole
+
+
+def test_region_params_vacuum_and_mop_medium() -> None:
+    vac = build_region_params(mode=MODE_VACUUM, vacuum_power="high")
+    assert vac["operatingMode"] == 2
+    assert vac["vacQty"] == 3
+    assert "padWetness" not in vac
+
+    mop = build_region_params(
+        mode=MODE_VACUUM_AND_MOP, vacuum_power="medium", mop_intensity="medium"
+    )
+    assert mop["operatingMode"] == 6
+    assert mop["vacQty"] == 2
+    assert mop["padWetness"] == {"disposable": 2, "reusable": 2}
+
+    payload = build_region_start_payload(
+        pmap_id="p",
+        regions=[{"region_id": "1", "type": "rid"}],
+        region_params=mop,
+    )
+    assert payload["regions"][0]["params"]["operatingMode"] == 6
+
+
+def test_parse_room_order_text() -> None:
+    assert parse_room_order_text("Kitchen, Hall\nOffice") == [
+        "Kitchen",
+        "Hall",
+        "Office",
+    ]
 
 
 def test_save_map_result_writes_rooms(tmp_path: Path, monkeypatch) -> None:
