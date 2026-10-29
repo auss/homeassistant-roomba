@@ -21,6 +21,7 @@ from .const import (
     CONF_COUNTRY,
     CONF_EMAIL,
     DEFAULT_COUNTRY,
+    DEFAULT_PORT,
     DOMAIN,
     OPT_LAST_MAP_FETCHED_AT,
     OPT_LAST_PMAP_ID,
@@ -28,7 +29,7 @@ from .const import (
 )
 from .map_cloud import MapFetchError, fetch_map_image
 from .map_store import assert_no_secrets_in_entry_data, save_map_result
-from .roomba_mqtt import RoombaMqttError, validate_connection
+from .roomba_mqtt import RoombaMqttError, format_endpoint, resolve_host, validate_connection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,15 +77,30 @@ class RoombaLocalConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle the initial LAN setup step."""
         errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {"endpoint": "—"}
 
         if user_input is not None:
+            blid = user_input[CONF_BLID].strip()
+            host_input = (user_input.get(CONF_HOST) or "").strip() or None
+            placeholders["endpoint"] = format_endpoint(
+                resolve_host(blid, host_input), DEFAULT_PORT
+            )
             try:
                 info = await _validate_input(self.hass, user_input)
             except RoombaMqttError as err:
-                _LOGGER.warning("Cannot connect to Roomba (%s): %s", err.kind, err)
+                if err.endpoint:
+                    placeholders["endpoint"] = err.endpoint
+                _LOGGER.warning(
+                    "Cannot connect to Roomba at %s (%s): %s",
+                    placeholders["endpoint"],
+                    err.kind,
+                    err,
+                )
                 errors["base"] = err.kind.value
             except ConnectionError:
-                _LOGGER.exception("Cannot connect to Roomba")
+                _LOGGER.exception(
+                    "Cannot connect to Roomba at %s", placeholders["endpoint"]
+                )
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error validating Roomba credentials")
@@ -108,6 +124,7 @@ class RoombaLocalConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+            description_placeholders=placeholders,
         )
 
 
