@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import CONF_BLID, CONF_HOST, CONF_PASSWORD, DOMAIN
-from .roomba_mqtt import RoombaMqttClient, RoombaState
+from .roomba_mqtt import RoombaMqttClient, RoombaMqttError, RoombaState
 
 _LOGGER = logging.getLogger(__name__)
+
+# Retry MQTT connect while entities stay unavailable (container/net flaps).
+RECONNECT_INTERVAL = timedelta(seconds=60)
 
 
 class RoombaDataUpdateCoordinator(DataUpdateCoordinator[RoombaState]):
@@ -27,13 +31,18 @@ class RoombaDataUpdateCoordinator(DataUpdateCoordinator[RoombaState]):
         )
         self.entry = entry
         self.client: RoombaMqttClient | None = None
+        self.last_connect_error: str | None = None
 
     async def async_config_entry_first_refresh(self) -> None:
-        """Connect MQTT before entities are set up."""
-        await self._async_connect()
-        await super().async_config_entry_first_refresh()
+        """Try MQTT connect; soft-fail so the entry loads even if refused."""
+        await self._async_try_connect(raise_on_failure=False)
+        # Do not raise ConfigEntryNotReady — keep the entry loaded and retry.
+        self.async_set_updated_data(
+            self.client.get_state() if self.client else RoombaState()
+        )
+        self.last_update_success = True
 
-    async def _async_connect(self) -> None:
+    async def _async_try_connect(self, *, raise_on_failure: bool) -> bool:
         data = self.entry.data
         client = RoombaMqttClient(
             blid=data[CONF_BLID],
@@ -41,9 +50,42 @@ class RoombaDataUpdateCoordinator(DataUpdateCoordinator[RoombaState]):
             host=data.get(CONF_HOST) or None,
             on_state=self._on_mqtt_state,
         )
-        await self.hass.async_add_executor_job(client.connect)
+        try:
+            await self.hass.async_add_executor_job(client.connect)
+        except RoombaMqttError as err:
+            self.last_connect_error = str(err)
+            _LOGGER.warning(
+                "Roomba MQTT connect soft-failed (%s): %s — will retry every %s",
+                err.kind.value,
+                err,
+                RECONNECT_INTERVAL,
+            )
+            await self.hass.async_add_executor_job(client.disconnect)
+            self.client = None
+            self.update_interval = RECONNECT_INTERVAL
+            if raise_on_failure:
+                raise
+            self.async_set_updated_data(RoombaState())
+            return False
+        except Exception:
+            self.last_connect_error = "unexpected connect failure"
+            _LOGGER.exception(
+                "Roomba MQTT connect soft-failed unexpectedly — will retry every %s",
+                RECONNECT_INTERVAL,
+            )
+            await self.hass.async_add_executor_job(client.disconnect)
+            self.client = None
+            self.update_interval = RECONNECT_INTERVAL
+            if raise_on_failure:
+                raise
+            self.async_set_updated_data(RoombaState())
+            return False
+
         self.client = client
+        self.last_connect_error = None
+        self.update_interval = None
         self.async_set_updated_data(client.get_state())
+        return True
 
     @callback
     def _on_mqtt_state(self, state: RoombaState) -> None:
@@ -52,13 +94,19 @@ class RoombaDataUpdateCoordinator(DataUpdateCoordinator[RoombaState]):
 
     async def _async_update_data(self) -> RoombaState:
         if self.client is None:
-            return RoombaState()
+            await self._async_try_connect(raise_on_failure=False)
+            if self.client is None:
+                return RoombaState()
         return await self.hass.async_add_executor_job(self.client.get_state)
 
     async def async_send_command(self, command: str) -> None:
         """Send a mission command via the MQTT client."""
         if self.client is None:
-            raise ConnectionError("Roomba MQTT client is not connected")
+            connected = await self._async_try_connect(raise_on_failure=False)
+            if not connected or self.client is None:
+                raise ConnectionError(
+                    self.last_connect_error or "Roomba MQTT client is not connected"
+                )
         await self.hass.async_add_executor_job(self.client.send_command, command)
 
     async def async_shutdown(self) -> None:

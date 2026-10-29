@@ -45,12 +45,43 @@ Copy `custom_components/roomba_local` into your Home Assistant
 Leave Host blank only when mDNS resolves from the Home Assistant host; otherwise set
 the explicit IP. Failed setup errors show the **exact host:port** that was dialed.
 
-### LAN MQTT smoke (same host as HA)
+### LAN MQTT smoke — host SSH vs HA container
 
+`ECONNREFUSED` (errno 111) to the robot’s **exact IP:8883** from `roomba_local`,
+while the same IP works via host SSH, almost always means **HA runs in a different
+network namespace** (Docker / HA OS) than your SSH shell — not a wrong IP and not
+bad BLID/password.
+
+**Always compare the same checks on both sides.** An `nc` that says “open” only
+proves reachability for the shell you ran it in. If that was host SSH, it does
+**not** prove the Home Assistant container can reach the robot.
+
+**1) On the SSH host** (proves robot listens on `:8883` from the host namespace):
 ```bash
+nc -vz 192.168.x.x 8883
 python3 scripts/lan_mqtt_smoke.py --blid YOUR_BLID --password YOUR_PASSWORD \
   --host 192.168.x.x
 ```
+
+**2) Inside the Home Assistant container** (must also succeed for the integration):
+```bash
+# Supervised / HA OS — adjust container name as needed
+docker exec -it homeassistant bash
+# or: ha core enter
+nc -vz 192.168.x.x 8883
+# copy/mount this repo's scripts/ + custom_components/roomba_local, then:
+pip install 'paho-mqtt>=2.1.0,<3'
+python3 scripts/lan_mqtt_smoke.py --blid YOUR_BLID --password YOUR_PASSWORD \
+  --host 192.168.x.x
+```
+
+| Host SSH `nc`/smoke | Inside HA container `nc`/smoke | Meaning |
+| --- | --- | --- |
+| open / OK | open / OK | Client/credentials — check HA logs for TLS/auth |
+| open / OK | refused (111) | **Container networking** — use Docker `host` network, macvlan, or fix firewall |
+| refused | refused | Robot not listening / wrong IP or VLAN |
+
+The client cannot bridge namespaces. Fix the HA container’s path to the robot VLAN.
 
 This uses the same `RoombaMqttClient` path as the integration (TLS `:8883`).
 Credentials are stored in Home Assistant’s encrypted config entries. Never commit
@@ -75,7 +106,7 @@ Config flow errors are classified:
 | Error | Meaning |
 | --- | --- |
 | DNS / mDNS | Hostname lookup failed — use LAN IP |
-| Unreachable | TCP `:8883` not reachable from the HA host (VLAN / container / firewall) |
+| Unreachable / refused | TCP `:8883` refused from the **HA process** (often Docker namespace ≠ SSH host) |
 | TLS | Robot reached, handshake failed (legacy OpenSSL cipher / renegotiation) |
 | Auth | BLID / local password rejected after TLS |
 

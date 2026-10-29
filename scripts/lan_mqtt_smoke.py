@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Standalone LAN MQTT smoke — same connect path as roomba_local.
 
-Run on the Home Assistant / Proxmox host (or any host that can reach the robot):
+Compare host SSH vs inside the HA container. An nc that is open on the host does
+not prove the homeassistant container can reach the robot.
 
-  python3 scripts/lan_mqtt_smoke.py --blid YOUR_BLID --password YOUR_PASSWORD \\
-      --host 192.168.x.x
+Host SSH:
+  nc -vz 192.168.x.x 8883
+  python3 scripts/lan_mqtt_smoke.py --blid BLID --password PASS --host 192.168.x.x
 
-Omit --host to try mDNS irobot-<blid>.local (lowercase).
-Does not print the password. Exit 0 on CONNACK success.
+Inside HA container (required for the integration):
+  docker exec -it homeassistant bash   # or: ha core enter
+  nc -vz 192.168.x.x 8883
+  python3 scripts/lan_mqtt_smoke.py --blid BLID --password PASS --host 192.168.x.x
 
+Host open + container refused (111) → fix container networking (host network /
+macvlan / firewall). Omit --host to try mDNS irobot-<blid>.local (lowercase).
 Requires: pip install 'paho-mqtt>=2.1.0,<3'
 """
 

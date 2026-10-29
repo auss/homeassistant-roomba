@@ -134,6 +134,28 @@ def build_ssl_context() -> ssl.SSLContext:
     return context
 
 
+def log_addrinfo(host: str, port: int) -> list[str]:
+    """Resolve and log getaddrinfo results; return human-readable sockaddr list."""
+    endpoint = format_endpoint(host, port)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as err:
+        _LOGGER.warning("getaddrinfo failed for %s: %s", endpoint, err)
+        raise
+    rendered: list[str] = []
+    for family, _socktype, proto, _canon, sockaddr in infos:
+        family_name = {socket.AF_INET: "IPv4", socket.AF_INET6: "IPv6"}.get(
+            family, str(family)
+        )
+        rendered.append(f"{family_name} {sockaddr} (proto={proto})")
+    _LOGGER.warning(
+        "Roomba Local getaddrinfo for %s → %s",
+        endpoint,
+        "; ".join(rendered) if rendered else "(empty)",
+    )
+    return rendered
+
+
 def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
     """Map socket/OS errors to user-facing failure kinds."""
     endpoint = format_endpoint(host, port)
@@ -156,11 +178,23 @@ def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
             ),
             endpoint=endpoint,
         )
+    if err_no == errno.ECONNREFUSED:
+        return RoombaMqttError(
+            ConnectFailureKind.UNREACHABLE,
+            (
+                f"Connection refused to {endpoint} from this process (errno 111). "
+                f"If host SSH nc/smoke can open that IP:8883 but Home Assistant cannot, "
+                f"HA is almost certainly in a different network namespace "
+                f"(Docker / HA OS). Compare nc -vz and lan_mqtt_smoke.py on the host "
+                f"vs inside the homeassistant container (docker exec / ha core enter); "
+                f"host-open + container-refuse means fix host network, macvlan, or firewall."
+            ),
+            endpoint=endpoint,
+        )
     unreachable_errnos = {
         errno.ETIMEDOUT,
         errno.EHOSTUNREACH,
         errno.ENETUNREACH,
-        errno.ECONNREFUSED,
         errno.ECONNRESET,
         errno.ENETDOWN,
     }
@@ -171,7 +205,7 @@ def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
             ConnectFailureKind.UNREACHABLE,
             (
                 f"Host {endpoint} is unreachable from this process ({err}). "
-                f"Confirm the IP/port and that this same host can run the LAN MQTT smoke script."
+                f"If host SSH works but HA fails, compare container vs host networking."
             ),
             endpoint=endpoint,
         )
@@ -345,6 +379,13 @@ class RoombaMqttClient:
         self._lock = threading.RLock()
         self._connected_event = threading.Event()
         self._error: RoombaMqttError | None = None
+        self._client: mqtt.Client | None = None
+        self._tls_ready = False
+
+    def _ensure_client(self) -> mqtt.Client:
+        """Build paho client + TLS context lazily (executor-safe, not on HA loop)."""
+        if self._client is not None and self._tls_ready:
+            return self._client
 
         # Proven recipe: CallbackAPI VERSION1, client_id = BLID, MQTT 3.1.1.
         client_kwargs: dict[str, Any] = {
@@ -354,12 +395,16 @@ class RoombaMqttClient:
         }
         if hasattr(mqtt, "CallbackAPIVersion"):
             client_kwargs["callback_api_version"] = mqtt.CallbackAPIVersion.VERSION1
-        self._client = mqtt.Client(**client_kwargs)
-        self._client.username_pw_set(self.blid, password)
-        self._client.tls_set_context(build_ssl_context())
-        self._client.on_connect = self._handle_connect
-        self._client.on_disconnect = self._handle_disconnect
-        self._client.on_message = self._handle_message
+        client = mqtt.Client(**client_kwargs)
+        client.username_pw_set(self.blid, self.password)
+        # ssl.create_default_context() must not run on the Home Assistant event loop.
+        client.tls_set_context(build_ssl_context())
+        client.on_connect = self._handle_connect
+        client.on_disconnect = self._handle_disconnect
+        client.on_message = self._handle_message
+        self._client = client
+        self._tls_ready = True
+        return client
 
     @property
     def last_error(self) -> RoombaMqttError | None:
@@ -371,17 +416,21 @@ class RoombaMqttClient:
         self._error = None
         self._connected_event.clear()
         endpoint = format_endpoint(self.host, self.port)
+        client = self._ensure_client()
 
         _LOGGER.warning(
             "Roomba Local dialing MQTT TLS endpoint %s (BLID …%s)",
             endpoint,
             self.blid[-6:],
         )
-
-        # Do not pre-probe TCP: a separate socket path caused false "unreachable"
-        # when the working script's MQTT/TLS connect succeeded on the same host.
         try:
-            self._client.connect(self.host, self.port, keepalive=MQTT_KEEPALIVE)
+            log_addrinfo(self.host, self.port)
+        except socket.gaierror as err:
+            raise classify_os_error(err, self.host, self.port) from err
+
+        # Do not pre-probe TCP with a separate socket — use paho's connect path only.
+        try:
+            client.connect(self.host, self.port, keepalive=MQTT_KEEPALIVE)
         except ssl.SSLError as err:
             raise RoombaMqttError(
                 ConnectFailureKind.TLS,
@@ -394,7 +443,7 @@ class RoombaMqttClient:
         except OSError as err:
             raise classify_os_error(err, self.host, self.port) from err
 
-        self._client.loop_start()
+        client.loop_start()
         if not self._connected_event.wait(timeout):
             self.disconnect()
             raise RoombaMqttError(
@@ -413,18 +462,23 @@ class RoombaMqttClient:
 
     def disconnect(self) -> None:
         """Stop the network loop and disconnect."""
-        try:
-            self._client.loop_stop()
-            self._client.disconnect()
-        except Exception:  # noqa: BLE001 - best-effort shutdown
-            _LOGGER.debug("Error during disconnect", exc_info=True)
+        client = self._client
+        if client is not None:
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:  # noqa: BLE001 - best-effort shutdown
+                _LOGGER.debug("Error during disconnect", exc_info=True)
         with self._lock:
             self.state.connected = False
 
     def send_command(self, command: MissionCommand) -> None:
         """Publish a mission command to the robot `cmd` topic."""
+        client = self._client
+        if client is None or not self.state.connected:
+            raise ConnectionError("Roomba MQTT client is not connected")
         payload = json.dumps(build_command_payload(command))
-        result = self._client.publish(MQTT_CMD_TOPIC, payload, qos=0)
+        result = client.publish(MQTT_CMD_TOPIC, payload, qos=0)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             raise ConnectionError(f"Failed to publish command {command}: rc={result.rc}")
         _LOGGER.debug("Published Roomba command %s", command)

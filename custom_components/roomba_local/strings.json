@@ -19,7 +19,7 @@
     "error": {
       "cannot_connect": "Could not connect to {endpoint} over local MQTT (TLS). See Home Assistant logs for detail.",
       "dns_error": "Hostname/mDNS lookup failed for {endpoint}. Enter the robot's LAN IP in Host.",
-      "unreachable": "{endpoint} is unreachable from this Home Assistant host (TCP). If scripts on another VM work, check HA OS/container networking, VLANs, and firewall — not a TLS/password problem.",
+      "unreachable": "{endpoint} refused/unreachable from the Home Assistant process (often errno 111). Compare nc -vz and lan_mqtt_smoke.py on host SSH vs inside the homeassistant container — host-open + container-refuse means fix Docker host network / macvlan / firewall.",
       "tls_error": "Reached {endpoint} but the TLS handshake failed (legacy OpenSSL cipher / renegotiation). Not necessarily a wrong IP.",
       "auth_invalid": "Robot at {endpoint} rejected MQTT username/password (BLID / local password). TCP and TLS succeeded.",
       "mqtt_protocol": "Robot at {endpoint} rejected the MQTT protocol or client id after TLS succeeded.",
