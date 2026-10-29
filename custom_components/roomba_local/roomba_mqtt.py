@@ -110,6 +110,38 @@ def resolve_host(blid: str, host: str | None = None) -> str:
     return f"irobot-{blid.strip().lower()}.local"
 
 
+def resolve_ipv4(host: str, port: int) -> str:
+    """Resolve *host* to an IPv4 literal (Roomba MQTT is IPv4-only in practice)."""
+    infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    if not infos:
+        raise socket.gaierror(socket.EAI_NONAME, f"No IPv4 address for {host}")
+    return str(infos[0][4][0])
+
+
+def open_ipv4_tcp(host: str, port: int, *, timeout: float) -> socket.socket:
+    """TCP connect like ``nc``: AF_INET only, no source bind, no proxy.
+
+    paho's default path uses ``socket.create_connection(..., source_address=('', 0))``
+    which always binds before connect and may walk non-IPv4 results. Match nc / the
+    working LAN script as closely as possible.
+    """
+    infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    if not infos:
+        raise OSError(errno.ENETUNREACH, f"No IPv4 route to {host}:{port}")
+    last_err: OSError | None = None
+    for _family, socktype, proto, _canon, sockaddr in infos:
+        sock = socket.socket(socket.AF_INET, socktype, proto)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(sockaddr)
+            return sock
+        except OSError as err:
+            last_err = err
+            sock.close()
+    assert last_err is not None
+    raise last_err
+
+
 def build_ssl_context() -> ssl.SSLContext:
     """TLS context matching the proven LAN MQTT recipe."""
     context = ssl.create_default_context()
@@ -134,6 +166,28 @@ def build_ssl_context() -> ssl.SSLContext:
     return context
 
 
+def log_addrinfo(host: str, port: int) -> list[str]:
+    """Resolve and log getaddrinfo results; return human-readable sockaddr list."""
+    endpoint = format_endpoint(host, port)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as err:
+        _LOGGER.warning("getaddrinfo failed for %s: %s", endpoint, err)
+        raise
+    rendered: list[str] = []
+    for family, _socktype, proto, _canon, sockaddr in infos:
+        family_name = {socket.AF_INET: "IPv4", socket.AF_INET6: "IPv6"}.get(
+            family, str(family)
+        )
+        rendered.append(f"{family_name} {sockaddr} (proto={proto})")
+    _LOGGER.warning(
+        "Roomba Local getaddrinfo for %s → %s",
+        endpoint,
+        "; ".join(rendered) if rendered else "(empty)",
+    )
+    return rendered
+
+
 def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
     """Map socket/OS errors to user-facing failure kinds."""
     endpoint = format_endpoint(host, port)
@@ -156,11 +210,24 @@ def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
             ),
             endpoint=endpoint,
         )
+    if err_no == errno.ECONNREFUSED:
+        return RoombaMqttError(
+            ConnectFailureKind.UNREACHABLE,
+            (
+                f"Connection refused to {endpoint} (errno 111). "
+                f"Robot MQTT accepts only ONE local client — disable Core Roomba "
+                f"(roombapy), close the iRobot app LAN session, and stop other "
+                f"LAN MQTT scripts, then retry. If nc -vz to that IP:8883 is open "
+                f"inside the HA container, networking is fine: run "
+                f"scripts/lan_mqtt_smoke.py inside the same container to verify "
+                f"this client path."
+            ),
+            endpoint=endpoint,
+        )
     unreachable_errnos = {
         errno.ETIMEDOUT,
         errno.EHOSTUNREACH,
         errno.ENETUNREACH,
-        errno.ECONNREFUSED,
         errno.ECONNRESET,
         errno.ENETDOWN,
     }
@@ -171,7 +238,8 @@ def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
             ConnectFailureKind.UNREACHABLE,
             (
                 f"Host {endpoint} is unreachable from this process ({err}). "
-                f"Confirm the IP/port and that this same host can run the LAN MQTT smoke script."
+                f"Confirm the config-entry Host matches the IP you tested with nc, "
+                f"and that nothing else holds the robot's single MQTT slot."
             ),
             endpoint=endpoint,
         )
@@ -345,6 +413,14 @@ class RoombaMqttClient:
         self._lock = threading.RLock()
         self._connected_event = threading.Event()
         self._error: RoombaMqttError | None = None
+        self._client: mqtt.Client | None = None
+        self._tls_ready = False
+        self._dial_host = self.host
+
+    def _ensure_client(self) -> mqtt.Client:
+        """Build paho client + TLS context lazily (executor-safe, not on HA loop)."""
+        if self._client is not None and self._tls_ready:
+            return self._client
 
         # Proven recipe: CallbackAPI VERSION1, client_id = BLID, MQTT 3.1.1.
         client_kwargs: dict[str, Any] = {
@@ -354,12 +430,40 @@ class RoombaMqttClient:
         }
         if hasattr(mqtt, "CallbackAPIVersion"):
             client_kwargs["callback_api_version"] = mqtt.CallbackAPIVersion.VERSION1
-        self._client = mqtt.Client(**client_kwargs)
-        self._client.username_pw_set(self.blid, password)
-        self._client.tls_set_context(build_ssl_context())
-        self._client.on_connect = self._handle_connect
-        self._client.on_disconnect = self._handle_disconnect
-        self._client.on_message = self._handle_message
+        client = mqtt.Client(**client_kwargs)
+        client.username_pw_set(self.blid, self.password)
+        # ssl.create_default_context() must not run on the Home Assistant event loop.
+        client.tls_set_context(build_ssl_context())
+        # paho 2.x still calls ssl.match_hostname (removed in Python 3.12) unless
+        # tls_insecure is set — required with CERT_NONE / IP hosts.
+        client.tls_insecure_set(True)
+        client.on_connect = self._handle_connect
+        client.on_disconnect = self._handle_disconnect
+        client.on_message = self._handle_message
+        # Prefer a longer TCP timeout than paho's 5s default.
+        client._connect_timeout = 30  # noqa: SLF001 - paho has no public setter
+        self._client = client
+        self._tls_ready = True
+        return client
+
+    def _install_direct_ipv4_socket(self, client: mqtt.Client, ipv4: str) -> None:
+        """Make paho open TCP like nc: AF_INET, no source bind, no mqtt proxy."""
+
+        def _create_socket_connection() -> socket.socket:
+            sock = open_ipv4_tcp(
+                ipv4, self.port, timeout=float(client._connect_timeout)
+            )
+            local = sock.getsockname()
+            peer = sock.getpeername()
+            _LOGGER.warning(
+                "Roomba Local TCP established %s → %s (AF_INET, no source bind)",
+                local,
+                peer,
+            )
+            return sock
+
+        # Instance override — avoid paho's create_connection(source_address=('',0)).
+        client._create_socket_connection = _create_socket_connection  # type: ignore[method-assign]
 
     @property
     def last_error(self) -> RoombaMqttError | None:
@@ -367,10 +471,28 @@ class RoombaMqttClient:
         return self._error
 
     def connect(self, timeout: float = 15.0) -> None:
-        """Connect via MQTT/TLS (same path as the working LAN recipe)."""
+        """Connect via MQTT/TLS (working LAN recipe + forced IPv4 TCP)."""
         self._error = None
         self._connected_event.clear()
-        endpoint = format_endpoint(self.host, self.port)
+        client = self._ensure_client()
+
+        try:
+            log_addrinfo(self.host, self.port)
+            ipv4 = resolve_ipv4(self.host, self.port)
+        except socket.gaierror as err:
+            raise classify_os_error(err, self.host, self.port) from err
+
+        # Dial the resolved IPv4 literal so getaddrinfo cannot prefer a dead AAAA.
+        dial_host = ipv4
+        endpoint = format_endpoint(dial_host, self.port)
+        if dial_host != self.host:
+            _LOGGER.warning(
+                "Roomba Local resolved %s → IPv4 %s for MQTT dial",
+                self.host,
+                dial_host,
+            )
+        self._dial_host = dial_host
+        self._install_direct_ipv4_socket(client, dial_host)
 
         _LOGGER.warning(
             "Roomba Local dialing MQTT TLS endpoint %s (BLID …%s)",
@@ -378,10 +500,9 @@ class RoombaMqttClient:
             self.blid[-6:],
         )
 
-        # Do not pre-probe TCP: a separate socket path caused false "unreachable"
-        # when the working script's MQTT/TLS connect succeeded on the same host.
+        # Do not pre-probe TCP with a separate socket — use one connect path only.
         try:
-            self._client.connect(self.host, self.port, keepalive=MQTT_KEEPALIVE)
+            client.connect(dial_host, self.port, keepalive=MQTT_KEEPALIVE)
         except ssl.SSLError as err:
             raise RoombaMqttError(
                 ConnectFailureKind.TLS,
@@ -392,16 +513,27 @@ class RoombaMqttClient:
                 endpoint=endpoint,
             ) from err
         except OSError as err:
-            raise classify_os_error(err, self.host, self.port) from err
+            raise classify_os_error(err, dial_host, self.port) from err
+        except AttributeError as err:
+            # paho + Python 3.12 without tls_insecure_set hits missing match_hostname.
+            raise RoombaMqttError(
+                ConnectFailureKind.TLS,
+                (
+                    f"TLS post-handshake failed for {endpoint}: {err}. "
+                    f"Need tls_insecure_set with CERT_NONE on Python 3.12+."
+                ),
+                endpoint=endpoint,
+            ) from err
 
-        self._client.loop_start()
+        client.loop_start()
         if not self._connected_event.wait(timeout):
             self.disconnect()
             raise RoombaMqttError(
                 ConnectFailureKind.TIMEOUT,
                 (
                     f"Timed out waiting for MQTT CONNACK from {endpoint}. "
-                    f"TCP/TLS may have opened but MQTT auth/session did not complete."
+                    f"TCP/TLS may have opened but MQTT auth/session did not complete. "
+                    f"Another client may hold the robot's single MQTT slot."
                 ),
                 endpoint=endpoint,
             )
@@ -413,18 +545,23 @@ class RoombaMqttClient:
 
     def disconnect(self) -> None:
         """Stop the network loop and disconnect."""
-        try:
-            self._client.loop_stop()
-            self._client.disconnect()
-        except Exception:  # noqa: BLE001 - best-effort shutdown
-            _LOGGER.debug("Error during disconnect", exc_info=True)
+        client = self._client
+        if client is not None:
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:  # noqa: BLE001 - best-effort shutdown
+                _LOGGER.debug("Error during disconnect", exc_info=True)
         with self._lock:
             self.state.connected = False
 
     def send_command(self, command: MissionCommand) -> None:
         """Publish a mission command to the robot `cmd` topic."""
+        client = self._client
+        if client is None or not self.state.connected:
+            raise ConnectionError("Roomba MQTT client is not connected")
         payload = json.dumps(build_command_payload(command))
-        result = self._client.publish(MQTT_CMD_TOPIC, payload, qos=0)
+        result = client.publish(MQTT_CMD_TOPIC, payload, qos=0)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             raise ConnectionError(f"Failed to publish command {command}: rc={result.rc}")
         _LOGGER.debug("Published Roomba command %s", command)
@@ -468,8 +605,9 @@ class RoombaMqttClient:
         # VERSION1 signature is (client, userdata, flags, rc); accept optional 5th
         # arg so accidental VERSION2 wiring still works.
         rc = _connack_int(reason_code)
+        dial = getattr(self, "_dial_host", self.host)
         if rc != 0:
-            self._error = classify_connack(rc, self.host, self.port)
+            self._error = classify_connack(rc, dial, self.port)
             self._connected_event.set()
             return
         with self._lock:
@@ -477,7 +615,7 @@ class RoombaMqttClient:
         client.subscribe("#", qos=0)
         self._connected_event.set()
         self._notify()
-        _LOGGER.info("Connected to Roomba MQTT at %s", format_endpoint(self.host, self.port))
+        _LOGGER.info("Connected to Roomba MQTT at %s", format_endpoint(dial, self.port))
 
     def _handle_disconnect(
         self,
