@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Roomba",
-        "description": "Enter the robot BLID and local MQTT password. Host/IP is optional; when omitted the integration uses mDNS hostname iRobot-<BLID>.local.",
+        "description": "Enter the robot BLID and local MQTT password. Host is optional: leave blank only if mDNS works from Home Assistant (iRobot-<BLID>.local); otherwise enter the robot's LAN IP. Last dial attempt: {endpoint}.",
         "data": {
           "blid": "BLID",
           "password": "Password",
@@ -12,19 +12,19 @@
         "data_description": {
           "blid": "Robot BLID (username for local MQTT).",
           "password": "Local MQTT password for the robot.",
-          "host": "Robot IP or hostname on your LAN. Leave blank to resolve via mDNS."
+          "host": "Prefer the robot LAN IP. Leave blank only if mDNS iRobot-<BLID>.local resolves from the HA host."
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to the robot over local MQTT (TLS port 8883). See Home Assistant logs for the classified failure detail.",
-      "dns_error": "Hostname/mDNS lookup failed. Enter the robot's LAN IP in Host, or fix mDNS from the Home Assistant host.",
-      "unreachable": "TCP port 8883 is unreachable from this Home Assistant host. If scripts on another VM work, check HA OS/container networking, VLANs, and firewall on the hypervisor — this is not a TLS/password problem.",
-      "tls_error": "Reached the robot but the TLS handshake failed. The robot needs legacy OpenSSL settings (AES128-SHA256, SECLEVEL=0, legacy renegotiation). Update this integration; do not treat this as a wrong IP.",
-      "auth_invalid": "Robot rejected MQTT username/password (BLID / local password). TCP and TLS succeeded.",
-      "mqtt_protocol": "Robot rejected the MQTT protocol or client id after TLS succeeded.",
-      "mqtt_timeout": "TCP is reachable but MQTT CONNACK timed out. The robot may be busy or dropping the TLS/MQTT session.",
-      "unknown": "Unexpected error while validating credentials."
+      "cannot_connect": "Could not connect to {endpoint} over local MQTT (TLS). See Home Assistant logs for detail.",
+      "dns_error": "Hostname/mDNS lookup failed for {endpoint}. Enter the robot's LAN IP in Host.",
+      "unreachable": "{endpoint} is unreachable from this Home Assistant host (TCP). If scripts on another VM work, check HA OS/container networking, VLANs, and firewall — not a TLS/password problem.",
+      "tls_error": "Reached {endpoint} but the TLS handshake failed (legacy OpenSSL cipher / renegotiation). Not necessarily a wrong IP.",
+      "auth_invalid": "Robot at {endpoint} rejected MQTT username/password (BLID / local password). TCP and TLS succeeded.",
+      "mqtt_protocol": "Robot at {endpoint} rejected the MQTT protocol or client id after TLS succeeded.",
+      "mqtt_timeout": "TCP to {endpoint} is reachable but MQTT CONNACK timed out.",
+      "unknown": "Unexpected error while validating credentials (tried {endpoint})."
     },
     "abort": {
       "already_configured": "This Roomba is already configured."

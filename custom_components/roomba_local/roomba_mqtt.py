@@ -49,9 +49,23 @@ class ConnectFailureKind(StrEnum):
 class RoombaMqttError(ConnectionError):
     """Connection failure with a classified cause."""
 
-    def __init__(self, kind: ConnectFailureKind, message: str) -> None:
+    def __init__(
+        self,
+        kind: ConnectFailureKind,
+        message: str,
+        *,
+        endpoint: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.kind = kind
+        self.endpoint = endpoint
+
+
+def format_endpoint(host: str, port: int) -> str:
+    """Format host:port for UI/logs (bracket IPv6)."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
 
 
 @dataclass
@@ -135,23 +149,26 @@ def build_ssl_context() -> ssl.SSLContext:
 
 def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
     """Map socket/OS errors to user-facing failure kinds."""
+    endpoint = format_endpoint(host, port)
     err_no = getattr(err, "errno", None)
     if isinstance(err, socket.gaierror):
         return RoombaMqttError(
             ConnectFailureKind.DNS,
             (
-                f"DNS/mDNS lookup failed for '{host}'. "
-                f"Use the robot's LAN IP instead of a hostname if discovery is unreliable."
+                f"DNS/mDNS lookup failed for {endpoint}. "
+                f"Use the robot's LAN IP in Host if discovery is unreliable."
             ),
+            endpoint=endpoint,
         )
     if isinstance(err, ssl.SSLError):
         return RoombaMqttError(
             ConnectFailureKind.TLS,
             (
-                f"TLS handshake to {host}:{port} failed ({err}). "
+                f"TLS handshake to {endpoint} failed ({err}). "
                 f"The robot requires legacy OpenSSL settings "
                 f"(AES128-SHA256 / SECLEVEL=0 / legacy renegotiation)."
             ),
+            endpoint=endpoint,
         )
     unreachable_errnos = {
         errno.ETIMEDOUT,
@@ -167,50 +184,59 @@ def classify_os_error(err: OSError, host: str, port: int) -> RoombaMqttError:
         return RoombaMqttError(
             ConnectFailureKind.UNREACHABLE,
             (
-                f"Host {host}:{port} is unreachable from this Home Assistant host "
+                f"Host {endpoint} is unreachable from this Home Assistant host "
                 f"({err}). If Python on another VM can reach the robot, check HA OS / "
                 f"container networking, VLANs, and firewall rules on the Proxmox host."
             ),
+            endpoint=endpoint,
         )
     return RoombaMqttError(
         ConnectFailureKind.UNKNOWN,
-        f"Failed to open MQTT socket to {host}:{port}: {err}",
+        f"Failed to open MQTT socket to {endpoint}: {err}",
+        endpoint=endpoint,
     )
 
 
 def classify_connack(rc: int, host: str, port: int) -> RoombaMqttError:
     """Map MQTT CONNACK return codes to failure kinds."""
+    endpoint = format_endpoint(host, port)
     if rc in (4, 5):
         return RoombaMqttError(
             ConnectFailureKind.AUTH,
             (
-                f"Robot at {host}:{port} rejected MQTT username/password "
+                f"Robot at {endpoint} rejected MQTT username/password "
                 f"(CONNACK {rc}). Check BLID and local MQTT password."
             ),
+            endpoint=endpoint,
         )
     if rc == 1:
         return RoombaMqttError(
             ConnectFailureKind.PROTOCOL,
-            f"Robot at {host}:{port} rejected MQTT protocol version (CONNACK {rc}).",
+            f"Robot at {endpoint} rejected MQTT protocol version (CONNACK {rc}).",
+            endpoint=endpoint,
         )
     if rc == 2:
         return RoombaMqttError(
             ConnectFailureKind.PROTOCOL,
-            f"Robot at {host}:{port} rejected MQTT client id (CONNACK {rc}).",
+            f"Robot at {endpoint} rejected MQTT client id (CONNACK {rc}).",
+            endpoint=endpoint,
         )
     if rc == 3:
         return RoombaMqttError(
             ConnectFailureKind.UNREACHABLE,
-            f"Robot MQTT broker at {host}:{port} unavailable (CONNACK {rc}).",
+            f"Robot MQTT broker at {endpoint} unavailable (CONNACK {rc}).",
+            endpoint=endpoint,
         )
     return RoombaMqttError(
         ConnectFailureKind.UNKNOWN,
-        f"MQTT CONNACK from {host}:{port} failed with rc={rc}.",
+        f"MQTT CONNACK from {endpoint} failed with rc={rc}.",
+        endpoint=endpoint,
     )
 
 
 def probe_tcp(host: str, port: int, timeout: float = 5.0) -> None:
     """Prove TCP reachability before attempting MQTT/TLS."""
+    endpoint = format_endpoint(host, port)
     try:
         addr_info = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as err:
@@ -230,7 +256,8 @@ def probe_tcp(host: str, port: int, timeout: float = 5.0) -> None:
         raise classify_os_error(last_err, host, port)
     raise RoombaMqttError(
         ConnectFailureKind.UNREACHABLE,
-        f"No usable address for {host}:{port}",
+        f"No usable address for {endpoint}",
+        endpoint=endpoint,
     )
 
 
@@ -390,8 +417,14 @@ class RoombaMqttClient:
         """Connect and start the network loop. Raises RoombaMqttError on failure."""
         self._error = None
         self._connected_event.clear()
+        endpoint = format_endpoint(self.host, self.port)
 
         # 1) TCP reachability — distinguishes "HA can't see the robot" from TLS/auth.
+        _LOGGER.warning(
+            "Roomba Local dialing MQTT TLS endpoint %s (BLID …%s)",
+            endpoint,
+            self.blid[-6:],
+        )
         probe_tcp(self.host, self.port, timeout=min(timeout, 5.0))
 
         # 2) MQTT CONNECT over TLS.
@@ -401,10 +434,11 @@ class RoombaMqttClient:
             raise RoombaMqttError(
                 ConnectFailureKind.TLS,
                 (
-                    f"TLS handshake to {self.host}:{self.port} failed: {err}. "
+                    f"TLS handshake to {endpoint} failed: {err}. "
                     f"Robot MQTT needs AES128-SHA256 with OpenSSL SECLEVEL=0 and "
                     f"legacy renegotiation enabled."
                 ),
+                endpoint=endpoint,
             ) from err
         except OSError as err:
             raise classify_os_error(err, self.host, self.port) from err
@@ -415,9 +449,10 @@ class RoombaMqttClient:
             raise RoombaMqttError(
                 ConnectFailureKind.TIMEOUT,
                 (
-                    f"Timed out waiting for MQTT CONNACK from {self.host}:{self.port}. "
+                    f"Timed out waiting for MQTT CONNACK from {endpoint}. "
                     f"TCP is reachable; TLS/MQTT may still be failing or the robot is busy."
                 ),
+                endpoint=endpoint,
             )
 
         if self._error is not None:

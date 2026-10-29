@@ -20,6 +20,7 @@ from custom_components.roomba_local.roomba_mqtt import (
     build_ssl_context,
     classify_connack,
     classify_os_error,
+    format_endpoint,
     map_activity,
     merge_reported,
     probe_tcp,
@@ -53,28 +54,39 @@ def test_ssl_context_uses_legacy_openssl3_settings() -> None:
     assert ctx.options & 0x40000
 
 
+def test_format_endpoint() -> None:
+    assert format_endpoint("192.168.132.27", 8883) == "192.168.132.27:8883"
+    assert format_endpoint("iRobot-ABCDEF.local", 8883) == "iRobot-ABCDEF.local:8883"
+    assert format_endpoint("2001:db8::1", 8883) == "[2001:db8::1]:8883"
+
+
 def test_classify_dns_and_unreachable_errors() -> None:
     host, port = "irobot.local", 8883
     dns_err = classify_os_error(socket.gaierror(-2, "name not known"), host, port)
     assert dns_err.kind == ConnectFailureKind.DNS
+    assert dns_err.endpoint == "irobot.local:8883"
     assert "DNS" in str(dns_err) or "mDNS" in str(dns_err)
 
     unreach = classify_os_error(OSError(errno.EHOSTUNREACH, "no route"), host, port)
     assert unreach.kind == ConnectFailureKind.UNREACHABLE
+    assert unreach.endpoint == "irobot.local:8883"
     assert "unreachable" in str(unreach).lower()
 
 
 def test_classify_tls_and_auth_errors() -> None:
     tls = classify_os_error(ssl.SSLError("WRONG_SIGNATURE_TYPE"), "10.0.0.5", 8883)
     assert tls.kind == ConnectFailureKind.TLS
+    assert tls.endpoint == "10.0.0.5:8883"
     assert "TLS" in str(tls)
 
     auth = classify_connack(4, "10.0.0.5", 8883)
     assert auth.kind == ConnectFailureKind.AUTH
+    assert auth.endpoint == "10.0.0.5:8883"
     assert "password" in str(auth).lower()
 
     proto = classify_connack(2, "10.0.0.5", 8883)
     assert proto.kind == ConnectFailureKind.PROTOCOL
+    assert proto.endpoint == "10.0.0.5:8883"
 
 
 def test_connack_int_handles_reason_code_objects() -> None:

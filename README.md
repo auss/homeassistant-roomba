@@ -40,9 +40,10 @@ Copy `custom_components/roomba_local` into your Home Assistant
 | --- | --- | --- |
 | BLID | yes | Robot identifier; MQTT username |
 | Password | yes | Local MQTT password |
-| Host | no | IP or hostname; defaults to `iRobot-<BLID>.local` via mDNS |
+| Host | no | Prefer robot **LAN IP**. Leave blank only if mDNS works from HA (`iRobot-<BLID>.local`) |
 
-Prefer the robot **LAN IP** if mDNS from the Home Assistant host is unreliable.
+Leave Host blank only when mDNS resolves from the Home Assistant host; otherwise set
+the explicit IP. Failed setup errors show the **exact host:port** that was dialed.
 Credentials are stored in Home Assistant’s encrypted config entries. Never commit
 BLID or passwords to git.
 
