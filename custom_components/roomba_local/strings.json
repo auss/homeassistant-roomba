@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Roomba",
-        "description": "Enter the robot BLID and local MQTT password. Host is optional: leave blank only if mDNS works from Home Assistant (iRobot-<BLID>.local); otherwise enter the robot's LAN IP. Last dial attempt: {endpoint}.",
+        "description": "Enter the robot BLID and local MQTT password. Host is optional: leave blank only if mDNS works from Home Assistant (irobot-<blid>.local); otherwise enter the robot's LAN IP. Last dial attempt: {endpoint}.",
         "data": {
           "blid": "BLID",
           "password": "Password",
@@ -12,7 +12,7 @@
         "data_description": {
           "blid": "Robot BLID (username for local MQTT).",
           "password": "Local MQTT password for the robot.",
-          "host": "Prefer the robot LAN IP. Leave blank only if mDNS iRobot-<BLID>.local resolves from the HA host."
+          "host": "Prefer the robot LAN IP. Leave blank only if mDNS irobot-<blid>.local resolves from the HA host."
         }
       }
     },

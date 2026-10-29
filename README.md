@@ -40,10 +40,19 @@ Copy `custom_components/roomba_local` into your Home Assistant
 | --- | --- | --- |
 | BLID | yes | Robot identifier; MQTT username |
 | Password | yes | Local MQTT password |
-| Host | no | Prefer robot **LAN IP**. Leave blank only if mDNS works from HA (`iRobot-<BLID>.local`) |
+| Host | no | Prefer robot **LAN IP**. Leave blank only if mDNS works from HA (`irobot-<blid>.local`) |
 
 Leave Host blank only when mDNS resolves from the Home Assistant host; otherwise set
 the explicit IP. Failed setup errors show the **exact host:port** that was dialed.
+
+### LAN MQTT smoke (same host as HA)
+
+```bash
+python3 scripts/lan_mqtt_smoke.py --blid YOUR_BLID --password YOUR_PASSWORD \
+  --host 192.168.x.x
+```
+
+This uses the same `RoombaMqttClient` path as the integration (TLS `:8883`).
 Credentials are stored in Home Assistant’s encrypted config entries. Never commit
 BLID or passwords to git.
 
