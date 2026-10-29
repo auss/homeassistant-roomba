@@ -42,8 +42,24 @@ Copy `custom_components/roomba_local` into your Home Assistant
 | Password | yes | Local MQTT password |
 | Host | no | IP or hostname; defaults to `iRobot-<BLID>.local` via mDNS |
 
+Prefer the robot **LAN IP** if mDNS from the Home Assistant host is unreliable.
 Credentials are stored in Home Assistant’s encrypted config entries. Never commit
 BLID or passwords to git.
+
+### Connection troubleshooting
+
+Config flow errors are classified:
+
+| Error | Meaning |
+| --- | --- |
+| DNS / mDNS | Hostname lookup failed — use LAN IP |
+| Unreachable | TCP `:8883` not reachable from the HA host (VLAN / container / firewall) |
+| TLS | Robot reached, handshake failed (legacy OpenSSL cipher / renegotiation) |
+| Auth | BLID / local password rejected after TLS |
+
+If Python scripts on another VM on the same Proxmox host work but HA does not,
+verify the **Home Assistant OS / container** can route to the robot VLAN (not
+only that a sibling VM can). That is a networking issue, not bad credentials.
 
 ## Development
 

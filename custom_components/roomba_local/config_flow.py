@@ -28,7 +28,7 @@ from .const import (
 )
 from .map_cloud import MapFetchError, fetch_map_image
 from .map_store import assert_no_secrets_in_entry_data, save_map_result
-from .roomba_mqtt import validate_connection
+from .roomba_mqtt import RoombaMqttError, validate_connection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,6 +80,9 @@ class RoombaLocalConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 info = await _validate_input(self.hass, user_input)
+            except RoombaMqttError as err:
+                _LOGGER.warning("Cannot connect to Roomba (%s): %s", err.kind, err)
+                errors["base"] = err.kind.value
             except ConnectionError:
                 _LOGGER.exception("Cannot connect to Roomba")
                 errors["base"] = "cannot_connect"
