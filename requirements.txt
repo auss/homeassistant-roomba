@@ -1,2 +1,3 @@
-paho-mqtt==2.1.0
-pillow==11.1.0
+paho-mqtt>=2.1.0,<3
+# Pillow is provided by Home Assistant Core; keep a loose pin for local unit tests only.
+pillow>=11
