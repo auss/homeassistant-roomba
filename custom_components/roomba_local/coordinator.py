@@ -44,6 +44,13 @@ class RoombaDataUpdateCoordinator(DataUpdateCoordinator[RoombaState]):
 
     async def _async_try_connect(self, *, raise_on_failure: bool) -> bool:
         data = self.entry.data
+        # Robot MQTT accepts only one LAN client. Core Roomba (roombapy) steals it.
+        if "roomba" in getattr(self.hass.config, "components", set()):
+            _LOGGER.error(
+                "Core Home Assistant Roomba integration is loaded. The robot allows "
+                "only ONE local MQTT connection — disable Core Roomba before using "
+                "roomba_local, or both will fight for port 8883."
+            )
         client = RoombaMqttClient(
             blid=data[CONF_BLID],
             password=data[CONF_PASSWORD],

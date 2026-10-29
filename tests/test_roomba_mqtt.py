@@ -22,6 +22,7 @@ from custom_components.roomba_local.roomba_mqtt import (
     map_activity,
     merge_reported,
     resolve_host,
+    resolve_ipv4,
 )
 
 
@@ -67,16 +68,19 @@ def test_classify_dns_and_unreachable_errors() -> None:
     assert unreach.endpoint == "irobot.local:8883"
 
 
-def test_classify_econnrefused_mentions_container_namespace() -> None:
+def test_classify_econnrefused_mentions_single_client_slot() -> None:
     err = classify_os_error(
         OSError(errno.ECONNREFUSED, "Connection refused"), "192.168.132.27", 8883
     )
     assert err.kind == ConnectFailureKind.UNREACHABLE
     assert err.endpoint == "192.168.132.27:8883"
     assert "111" in str(err) or "refused" in str(err).lower()
-    assert "container" in str(err).lower() or "Docker" in str(err)
-    assert "nc" in str(err).lower()
-    assert "macvlan" in str(err).lower() or "firewall" in str(err).lower()
+    assert "ONE" in str(err) or "single" in str(err).lower() or "roombapy" in str(err).lower()
+    assert "smoke" in str(err).lower()
+
+
+def test_resolve_ipv4_literal() -> None:
+    assert resolve_ipv4("192.168.132.27", 8883) == "192.168.132.27"
 
 
 def test_client_init_does_not_build_ssl_on_construct() -> None:
@@ -85,6 +89,15 @@ def test_client_init_does_not_build_ssl_on_construct() -> None:
     client = RoombaMqttClient(blid="ABCDEF", password="x", host="127.0.0.1")
     assert client._client is None
     assert client._tls_ready is False
+
+
+def test_ensure_client_sets_tls_insecure() -> None:
+    from custom_components.roomba_local.roomba_mqtt import RoombaMqttClient
+
+    client = RoombaMqttClient(blid="ABCDEF", password="x", host="127.0.0.1")
+    paho = client._ensure_client()
+    assert paho._tls_insecure is True
+    assert client._tls_ready is True
 
 
 def test_classify_tls_and_auth_errors() -> None:

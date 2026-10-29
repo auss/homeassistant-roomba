@@ -45,47 +45,35 @@ Copy `custom_components/roomba_local` into your Home Assistant
 Leave Host blank only when mDNS resolves from the Home Assistant host; otherwise set
 the explicit IP. Failed setup errors show the **exact host:port** that was dialed.
 
-### LAN MQTT smoke — host SSH vs HA container
+### LAN MQTT smoke — run it **inside** the HA container
 
-`ECONNREFUSED` (errno 111) to the robot’s **exact IP:8883** from `roomba_local`,
-while the same IP works via host SSH, almost always means **HA runs in a different
-network namespace** (Docker / HA OS) than your SSH shell — not a wrong IP and not
-bad BLID/password.
+The robot’s MQTT broker on `:8883` accepts **only one** local client. If Core
+Roomba (`roombapy`), the iRobot app (LAN), or `roomba-control.py` holds the slot,
+`roomba_local` gets `ECONNREFUSED` even when `nc -vz IP 8883` says **open**.
 
-**Always compare the same checks on both sides.** An `nc` that says “open” only
-proves reachability for the shell you ran it in. If that was host SSH, it does
-**not** prove the Home Assistant container can reach the robot.
+**If `nc` is open inside the Home Assistant container, networking is not the
+problem.** Run the smoke script in that same container — it uses the same
+`RoombaMqttClient` as the integration (forced IPv4 TCP, `create_default_context`,
+cipher loop, `OP_LEGACY_SERVER_CONNECT`, paho VERSION1, `tls_insecure_set`).
 
-**1) On the SSH host** (proves robot listens on `:8883` from the host namespace):
 ```bash
+# Inside HA container (docker exec -it homeassistant bash / ha core enter):
 nc -vz 192.168.x.x 8883
-python3 scripts/lan_mqtt_smoke.py --blid YOUR_BLID --password YOUR_PASSWORD \
-  --host 192.168.x.x
-```
-
-**2) Inside the Home Assistant container** (must also succeed for the integration):
-```bash
-# Supervised / HA OS — adjust container name as needed
-docker exec -it homeassistant bash
-# or: ha core enter
-nc -vz 192.168.x.x 8883
-# copy/mount this repo's scripts/ + custom_components/roomba_local, then:
 pip install 'paho-mqtt>=2.1.0,<3'
 python3 scripts/lan_mqtt_smoke.py --blid YOUR_BLID --password YOUR_PASSWORD \
   --host 192.168.x.x
 ```
 
-| Host SSH `nc`/smoke | Inside HA container `nc`/smoke | Meaning |
+Also compare host SSH only to rule out VLAN/firewall mistakes:
+
+| Inside HA `nc` | Inside HA smoke | Likely cause |
 | --- | --- | --- |
-| open / OK | open / OK | Client/credentials — check HA logs for TLS/auth |
-| open / OK | refused (111) | **Container networking** — use Docker `host` network, macvlan, or fix firewall |
-| refused | refused | Robot not listening / wrong IP or VLAN |
+| open | OK | Integration/config — check Host matches the IP you tested |
+| open | refused / fail | Single-client slot held, or credentials/TLS — disable Core Roomba |
+| refused | refused | Container cannot reach robot VLAN |
 
-The client cannot bridge namespaces. Fix the HA container’s path to the robot VLAN.
-
-This uses the same `RoombaMqttClient` path as the integration (TLS `:8883`).
-Credentials are stored in Home Assistant’s encrypted config entries. Never commit
-BLID or passwords to git.
+Disable **Core Roomba** before using this integration. Credentials stay in HA’s
+encrypted config entries — never commit BLID or passwords.
 
 ### Not the built-in “Roomba” integration
 
@@ -106,13 +94,13 @@ Config flow errors are classified:
 | Error | Meaning |
 | --- | --- |
 | DNS / mDNS | Hostname lookup failed — use LAN IP |
-| Unreachable / refused | TCP `:8883` refused from the **HA process** (often Docker namespace ≠ SSH host) |
+| Unreachable / refused | TCP `:8883` refused — often another client holds the single MQTT slot |
 | TLS | Robot reached, handshake failed (legacy OpenSSL cipher / renegotiation) |
 | Auth | BLID / local password rejected after TLS |
 
-If Python scripts on another VM on the same Proxmox host work but HA does not,
-verify the **Home Assistant OS / container** can route to the robot VLAN (not
-only that a sibling VM can). That is a networking issue, not bad credentials.
+If `nc` works **inside** the HA container but the integration does not, run
+`lan_mqtt_smoke.py` there before blaming Docker networking. Confirm the config
+entry Host is the same IP you probed.
 
 ## Development
 
