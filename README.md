@@ -10,7 +10,8 @@ Supports Roomba Combo j9+ and the same local MQTT / LSS family.
 
 - **Config flow**: BLID, local MQTT password, optional host/IP
 - **Vacuum entity**: start / pause / resume / stop / return to dock / locate
-- **Clean rooms**: `roomba_local.clean_rooms` with room names (after map fetch)
+- **Clean rooms**: ordered plan + Clean mode / Vacuum power / Mop intensity selects
+  + **Start room clean** button (also `roomba_local.clean_rooms`)
 - **Sensors**: battery, status, mission phase, location/pose summary, bin full
 - **Find button**: locate beep
 - **Map image + rooms**: on-demand cloud fetch via Configure → *Fetch cloud map*

@@ -11,17 +11,31 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
+from .clean_options import (
+    DEFAULT_MODE,
+    DEFAULT_MOP,
+    DEFAULT_POWER,
+    MODES,
+    MOP_LEVELS,
+    POWERS,
+    build_region_params,
+)
 from .const import (
     CONF_BLID,
     CONF_COUNTRY,
     CONF_EMAIL,
     DEFAULT_COUNTRY,
     DOMAIN,
+    OPT_CLEAN_MODE,
+    OPT_CLEAN_ROOM_ORDER,
     OPT_LAST_MAP_FETCHED_AT,
     OPT_LAST_PMAP_ID,
     OPT_LAST_PMAPV_ID,
+    OPT_MOP_INTENSITY,
+    OPT_VACUUM_POWER,
     SERVICE_CLEAN_ROOMS,
     SERVICE_FETCH_MAP,
+    SERVICE_SET_ROOM_ORDER,
 )
 from .map_cloud import MapFetchError, fetch_map_image
 from .map_store import (
@@ -45,6 +59,16 @@ SERVICE_FETCH_MAP_SCHEMA = vol.Schema(
 )
 
 SERVICE_CLEAN_ROOMS_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("rooms"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("mode"): vol.In(MODES),
+        vol.Optional("vacuum_power"): vol.In(POWERS),
+        vol.Optional("mop_intensity"): vol.In(MOP_LEVELS),
+    }
+)
+
+SERVICE_SET_ROOM_ORDER_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): cv.string,
         vol.Required("rooms"): vol.All(cv.ensure_list, [cv.string]),
@@ -86,7 +110,6 @@ async def async_fetch_map(hass: HomeAssistant, call: ServiceCall) -> None:
     except MapFetchError as err:
         raise HomeAssistantError(str(err)) from err
     finally:
-        # Scrub service-local secrets regardless of outcome.
         email = ""
         password = ""
 
@@ -109,6 +132,27 @@ async def async_fetch_map(hass: HomeAssistant, call: ServiceCall) -> None:
         blid[-6:],
         len(result.rooms),
     )
+
+
+async def async_set_room_order(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Persist ordered room names for the Start room clean button."""
+    entry = _resolve_entry(hass, call.data.get("entry_id"))
+    blid = entry.data[CONF_BLID]
+    requested = [str(r) for r in call.data.get("rooms") or []]
+    rooms = await hass.async_add_executor_job(load_rooms, hass, blid)
+    if not rooms:
+        raise HomeAssistantError(
+            "No room map yet. Fetch the cloud map first, then set room order."
+        )
+    try:
+        matched = resolve_room_names(rooms, requested)
+    except KeyError as err:
+        raise HomeAssistantError(str(err)) from err
+    order = [r["name"] for r in matched]
+    new_options = {**dict(entry.options), OPT_CLEAN_ROOM_ORDER: order}
+    assert_no_secrets_in_entry_data(new_options)
+    hass.config_entries.async_update_entry(entry, options=new_options)
+    _LOGGER.info("Room clean order for %s: %s", blid[-6:], ", ".join(order))
 
 
 async def async_clean_rooms(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -134,10 +178,28 @@ async def async_clean_rooms(hass: HomeAssistant, call: ServiceCall) -> None:
     except KeyError as err:
         raise HomeAssistantError(str(err)) from err
 
+    mode = str(
+        call.data.get("mode")
+        or entry.options.get(OPT_CLEAN_MODE)
+        or DEFAULT_MODE
+    )
+    power = str(
+        call.data.get("vacuum_power")
+        or entry.options.get(OPT_VACUUM_POWER)
+        or DEFAULT_POWER
+    )
+    mop = str(
+        call.data.get("mop_intensity")
+        or entry.options.get(OPT_MOP_INTENSITY)
+        or DEFAULT_MOP
+    )
+    params = build_region_params(mode=mode, vacuum_power=power, mop_intensity=mop)
+
     payload = build_region_start_payload(
         pmap_id=str(pmap_id),
         regions=matched,
         user_pmapv_id=str(pmapv_id) if pmapv_id else None,
+        region_params=params,
     )
 
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
@@ -149,8 +211,26 @@ async def async_clean_rooms(hass: HomeAssistant, call: ServiceCall) -> None:
     except ConnectionError as err:
         raise HomeAssistantError(str(err)) from err
 
+    # Remember last prefs (rooms order + mode) in options — not passwords.
+    new_options = {
+        **dict(entry.options),
+        OPT_CLEAN_ROOM_ORDER: [r["name"] for r in matched],
+        OPT_CLEAN_MODE: mode,
+        OPT_VACUUM_POWER: power,
+        OPT_MOP_INTENSITY: mop,
+    }
+    assert_no_secrets_in_entry_data(new_options)
+    hass.config_entries.async_update_entry(entry, options=new_options)
+
     names = ", ".join(r["name"] for r in matched)
-    _LOGGER.info("Selective clean started for %s: %s", blid[-6:], names)
+    _LOGGER.info(
+        "Selective clean started for %s: %s (%s / %s / mop %s)",
+        blid[-6:],
+        names,
+        mode,
+        power,
+        mop,
+    )
 
 
 async def async_register_services(hass: HomeAssistant) -> None:
@@ -179,11 +259,23 @@ async def async_register_services(hass: HomeAssistant) -> None:
             schema=SERVICE_CLEAN_ROOMS_SCHEMA,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_ROOM_ORDER):
+
+        async def _handle_order(call: ServiceCall) -> None:
+            await async_set_room_order(hass, call)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_ROOM_ORDER,
+            _handle_order,
+            schema=SERVICE_SET_ROOM_ORDER_SCHEMA,
+        )
+
 
 async def async_unregister_services(hass: HomeAssistant) -> None:
     """Remove domain services when last entry unloads."""
     if hass.config_entries.async_entries(DOMAIN):
         return
-    for service in (SERVICE_FETCH_MAP, SERVICE_CLEAN_ROOMS):
+    for service in (SERVICE_FETCH_MAP, SERVICE_CLEAN_ROOMS, SERVICE_SET_ROOM_ORDER):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)

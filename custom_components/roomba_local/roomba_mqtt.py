@@ -301,20 +301,28 @@ def build_region_start_payload(
     pmap_id: str,
     regions: list[dict[str, str]],
     user_pmapv_id: str | None = None,
+    region_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Selective clean: start + pmap_id + regions (local MQTT cmd)."""
+    """Selective clean: start + pmap_id + ordered regions (local MQTT cmd).
+
+    When ``region_params`` is set (mode/power/mop), it is copied onto each region
+    (Combo app shape). Callers may omit it for a bare regions-only start.
+    """
+    region_list: list[dict[str, Any]] = []
+    for r in regions:
+        entry: dict[str, Any] = {
+            "region_id": str(r["region_id"]),
+            "type": str(r.get("type") or "rid"),
+        }
+        if region_params:
+            entry["params"] = dict(region_params)
+        region_list.append(entry)
     payload: dict[str, Any] = {
         "command": "start",
         "time": int(time.time()),
         "initiator": "localApp",
         "pmap_id": pmap_id,
-        "regions": [
-            {
-                "region_id": str(r["region_id"]),
-                "type": str(r.get("type") or "rid"),
-            }
-            for r in regions
-        ],
+        "regions": region_list,
         "ordered": 1,
     }
     if user_pmapv_id:
