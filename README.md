@@ -46,6 +46,18 @@ Prefer the robot **LAN IP** if mDNS from the Home Assistant host is unreliable.
 Credentials are stored in Home Assistant’s encrypted config entries. Never commit
 BLID or passwords to git.
 
+### Not the built-in “Roomba” integration
+
+Home Assistant Core also ships a separate **Roomba** integration that uses
+`roombapy` (often MQTT attempts that show up as `roombapy.remote_client` /
+`ConnectionRefusedError` in logs). **Roomba Local** (`roomba_local`) does **not**
+use `roombapy`. It connects with its own paho-mqtt client over **TLS port 8883**
+and legacy OpenSSL ciphers. If you see `roombapy` in the traceback, that failure
+is from Core’s Roomba integration (or another custom component), not this one.
+
+Pillow is **not** pinned in the integration manifest — Home Assistant Core already
+provides it. Map rendering imports that shared package.
+
 ### Connection troubleshooting
 
 Config flow errors are classified:

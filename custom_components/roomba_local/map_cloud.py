@@ -337,8 +337,13 @@ def render_map_png(
     title: str,
     subtitle: str,
 ) -> bytes:
-    """Render a simple PNG from UMF geometry (Pillow)."""
-    from PIL import Image, ImageDraw
+    """Render a simple PNG from UMF geometry (uses Home Assistant's Pillow)."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as err:  # pragma: no cover - HA always ships Pillow
+        raise MapFetchError(
+            "Pillow is required to render map images; it ships with Home Assistant Core"
+        ) from err
 
     width, height = 800, 800
     img = Image.new("RGB", (width, height), color=(245, 248, 250))
